@@ -1,13 +1,13 @@
-name: Deploy
+name: Deploy Static HTML
 
 on:
   push:
     branches: [main]
-  workflow_dispatch:
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
     env:
       HOST: ${{ secrets.SERVER_HOST }}
       USER: ${{ secrets.SERVER_USERNAME }}
@@ -15,93 +15,96 @@ jobs:
       PORT: "8025"
 
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Node dependencies
-        run: npm ci
+      # --- NODE.JS DEPENDENCY SETUP ---
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
 
-      - name: Build app
-        run: npm run build
+      - name: Install Dependencies
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      # Optional: Uncomment the lines below if your project requires a build step (like React/Vite/Next)
+      # - name: Build Project
+      #   run: npm run build
+      # --------------------------------
 
       - name: Install sshpass
         run: sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
 
-      - name: Setup server (idempotent)
+      - name: Setup Apache Server
         run: |
           set -e
 
-          echo '<VirtualHost *:'"$PORT"'>' > /tmp/gh-actions.conf
-          echo '    DocumentRoot /home/'"$USER"'/gh-actions-app/current' >> /tmp/gh-actions.conf
-          echo '    <Directory /home/'"$USER"'/gh-actions-app/>' >> /tmp/gh-actions.conf
-          echo '        Options -Indexes +FollowSymLinks' >> /tmp/gh-actions.conf
-          echo '        AllowOverride None' >> /tmp/gh-actions.conf
-          echo '        Require all granted' >> /tmp/gh-actions.conf
-          echo '    </Directory>' >> /tmp/gh-actions.conf
-          echo '    ErrorLog ${APACHE_LOG_DIR}/gh-actions-error.log' >> /tmp/gh-actions.conf
-          echo '    CustomLog ${APACHE_LOG_DIR}/gh-actions-access.log combined' >> /tmp/gh-actions.conf
-          echo '</VirtualHost>' >> /tmp/gh-actions.conf
+          # Sanitize HOST: strip out http://, https://, trailing slashes, and whitespace
+          CLEAN_HOST=$(echo "${HOST}" | sed -e 's|^https\?://||' -e 's|/$||' | xargs)
 
-          sshpass -p "$PASS" scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null /tmp/gh-actions.conf "$USER@$HOST:/tmp/gh-actions.conf"
+          # Dynamically build the virtualhost file locally on the runner
+          echo "<VirtualHost *:$PORT>" > /tmp/site.conf
+          echo "    DocumentRoot /home/$USER/website" >> /tmp/site.conf
+          echo "    <Directory /home/$USER/website>" >> /tmp/site.conf
+          echo "        Options Indexes FollowSymLinks" >> /tmp/site.conf
+          echo "        AllowOverride None" >> /tmp/site.conf
+          echo "        Require all granted" >> /tmp/site.conf
+          echo "    </Directory>" >> /tmp/site.conf
+          echo "</VirtualHost>" >> /tmp/site.conf
 
-          sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$USER@$HOST" "
+          # Securely send configuration to remote temp directory
+          sshpass -p "$PASS" scp -o StrictHostKeyChecking=no /tmp/site.conf "$USER@$CLEAN_HOST:/tmp/site.conf"
+
+          # Run server configurations remotely
+          sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no "$USER@$CLEAN_HOST" "
             set -e
 
-            if ! dpkg -s apache2 2>/dev/null | grep -q 'Status: install ok installed'; then
-              echo 'Installing Apache...'
+            if ! dpkg -s apache2 >/dev/null 2>&1; then
               echo '$PASS' | sudo -S apt-get update -qq
               echo '$PASS' | sudo -S apt-get install -y -qq apache2
             fi
 
-            mkdir -p ~/gh-actions-app/{v1,v2}
+            mkdir -p ~/website
+            
+            # Fix permissions so Apache can read the user path
+            chmod 755 /home/$USER
+            chmod 755 /home/$USER/website
 
-            # Ensure nothing else is bound to the website port, then ensure Apache listens on the desired port
-            echo '$PASS' | sudo -S sh -c 'lsof -ti tcp:8039 2>/dev/null | xargs -r sudo kill -9 || true'
-            echo '$PASS' | sudo -S sed -i '/^Listen 8039$/d' /etc/apache2/ports.conf 2>/dev/null || true
-            if ! grep -q 'Listen $PORT' /etc/apache2/ports.conf 2>/dev/null; then
-              echo '$PASS' | sudo -S sh -c 'echo "Listen $PORT" >> /etc/apache2/ports.conf'
+            # Safely inject the port configuration
+            if ! grep -q \"Listen $PORT\" /etc/apache2/ports.conf; then
+              echo '$PASS' | sudo -S sh -c \"echo 'Listen $PORT' >> /etc/apache2/ports.conf\"
             fi
 
-            echo '$PASS' | sudo -S mv /tmp/gh-actions.conf /etc/apache2/sites-available/gh-actions.conf
-            if ! [ -L /etc/apache2/sites-enabled/gh-actions.conf ]; then
-              echo '$PASS' | sudo -S a2ensite gh-actions.conf
+            echo '$PASS' | sudo -S mv /tmp/site.conf /etc/apache2/sites-available/site.conf
+
+            if ! [ -L /etc/apache2/sites-enabled/site.conf ]; then
+              echo '$PASS' | sudo -S a2ensite site.conf
             fi
 
-            echo '$PASS' | sudo -S chmod 755 /home/\$USER/
-            echo '$PASS' | sudo -S chown -R \$USER:www-data ~/gh-actions-app/
-
-            echo '$PASS' | sudo -S apache2ctl configtest
             echo '$PASS' | sudo -S apache2ctl graceful
           "
 
-      - name: Blue-Green Deploy
+      - name: Upload files
         run: |
           set -e
+          CLEAN_HOST=$(echo "${HOST}" | sed -e 's|^https\?://||' -e 's|/$||' | xargs)
 
-          echo "=== Testing SSH connection ==="
-          sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$USER@$HOST" "echo 'SSH connection OK'"
+          # Clean destination directory first, then upload cleanly
+          sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no "$USER@$CLEAN_HOST" "rm -rf /home/$USER/website/*"
+          
+          # If you use a build framework (like React), change ./* down below to ./dist/* or ./build/*
+          sshpass -p "$PASS" scp -r -o StrictHostKeyChecking=no ./* "$USER@$CLEAN_HOST:/home/$USER/website/"
 
-          echo "=== Determining inactive version (blue-green) ==="
-          INACTIVE=$(sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$USER@$HOST" 'APP_DIR=/home/'"$USER"'/gh-actions-app; if [ -L "$APP_DIR/current" ] && [ "$(readlink "$APP_DIR/current")" = "$APP_DIR/v2" ]; then echo v1; else echo v2; fi')
-          echo "Target version: $INACTIVE"
-
-          echo "=== Uploading build output to inactive version ==="
-          sshpass -p "$PASS" scp -r -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null dist/. "$USER@$HOST:/home/$USER/gh-actions-app/$INACTIVE/"
-
-          echo "=== Atomic symlink swap + graceful Apache reload ==="
-          DEPLOY_TIME="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
-          sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$USER@$HOST" "APP_DIR=/home/$USER/gh-actions-app; ln -sfn \$APP_DIR/$INACTIVE \$APP_DIR/current; echo '$DEPLOY_TIME - deployed $INACTIVE' >> \$APP_DIR/deploy.log; echo '$PASS' | sudo -S apache2ctl graceful"
-
-      - name: Verify deployment
+      - name: Verify Deployment
         run: |
-          echo "=== Verifying deployment on port $PORT ==="
+          set -e
+          CLEAN_HOST=$(echo "${HOST}" | sed -e 's|^https\?://||' -e 's|/$||' | xargs)
+          
           sleep 2
-          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "http://$HOST:$PORT/")
-          CONTENT=$(curl -s "http://$HOST:$PORT/")
-          echo "HTTP Status: $RESPONSE"
-          echo "Content preview: $(echo "$CONTENT" | grep -o '<title>.*</title>' || true)"
-          if [ "$RESPONSE" != "200" ]; then
-            echo "Deployment verification failed"
-            exit 1
-          fi
-          echo "Deployment verified - site is live on http://$HOST:$PORT"
+          curl -I "http://$CLEAN_HOST:$PORT/"
