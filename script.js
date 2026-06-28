@@ -49,8 +49,37 @@ if (menuIcon && navLinks) {
   });
 }
 
+// Scroll reveal animation for elements
+function initScrollReveal() {
+  const revealElements = document.querySelectorAll(
+    ".home-container, .about-photo, .about-content, .about-box, .education-card, .skill-card, .experience-card, .contact-form, .section-title, .skill-heading"
+  );
+
+  if (!revealElements.length) return;
+
+  const observer = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((entry, index) => {
+        if (entry.isIntersecting) {
+          entry.target.classList.add("reveal-visible");
+          observer.unobserve(entry.target);
+        }
+      });
+    },
+    { threshold: 0.15 }
+  );
+
+  revealElements.forEach((element, index) => {
+    element.classList.add("reveal-item");
+    element.style.transitionDelay = `${index * 0.002}s`;
+    observer.observe(element);
+  });
+}
+
 // Contact form submission
 document.addEventListener("DOMContentLoaded", function() {
+  initScrollReveal();
+
   const contactForm = document.querySelector(".contact-form");
   if (contactForm) {
     contactForm.addEventListener("submit", function(e) {
