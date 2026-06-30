@@ -6,8 +6,10 @@
     text-decoration: none;
     scroll-behavior: smooth;
     list-style: none;
-    
-    
+}
+
+body {
+    overflow-x: hidden;
 }
 header{
     position: fixed;
@@ -17,7 +19,7 @@ header{
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 2rem;
+    gap: 1rem;
     width: min(95vw, 1200px);
     background-color: rgba(0, 0, 0, 0.802);
     backdrop-filter: blur(8px);
@@ -104,11 +106,15 @@ li a:hover::before{
     background: linear-gradient(to right, rgb(255,0,255), rgb(0,157,255));
     transform: scale(1.03);
 }
-#menu-icon{
+.menu-toggle{
     font-size:2rem;
     display:none;
     color:white;
     cursor:pointer;
+    background: transparent;
+    border: none;
+    padding: 0;
+    z-index: 1200;
 }
 section{
     min-height: 100vh;
@@ -697,20 +703,54 @@ footer ul li a{
 
     header{
         padding:0.8rem 1rem;
+        overflow: visible;
+        width: min(92vw, 1200px);
     }
 
     .nav-links{
         display:none;
     }
 
+    .nav-links.active {
+        display: flex !important;
+        position: absolute;
+        top: calc(100% + 0.7rem);
+        left: 50%;
+        transform: translateX(-50%);
+        flex-direction: column;
+        align-items: center;
+        gap: 0.9rem;
+        width: min(88vw, 280px);
+        background: rgba(0, 0, 0, 0.96);
+        padding: 1rem 1.2rem;
+        border-radius: 1rem;
+        box-shadow: 0 12px 30px rgba(0,0,0,0.25);
+        z-index: 1100;
+    }
+
+    .nav-links.active li {
+        width: 100%;
+        text-align: center;
+    }
+
+    .nav-links.active li a {
+        display: block;
+        width: 100%;
+        padding: 0.55rem 0;
+    }
+
     .visit-btn{
         display:none;
     }
 
-    #menu-icon{
+    .menu-toggle{
         display:block;
         color:white;
         cursor:pointer;
+        position: absolute;
+        right: 1rem;
+        top: 50%;
+        transform: translateY(-50%);
     }
 
     /* HOME */
@@ -864,38 +904,6 @@ footer ul li a{
         width:60px;
         height:60px;
     }
-}
-
-.nav-links.active {
-    display: flex !important;
-    position: absolute;
-    top: 100%;
-    left: 50%;
-    transform: translateX(-50%);
-    flex-direction: column;
-    background-color: rgba(0, 0, 0, 0.95);
-    backdrop-filter: blur(10px);
-    border-radius: 1rem;
-    padding: 1.5rem;
-    gap: 1.5rem;
-    width: 90%;
-    max-width: 300px;
-    margin-top: 1rem;
-    box-shadow: 0 10px 30px rgba(0,0,0,0.2);
-    z-index: 999;
-}
-
-.nav-links.active li a {
-    text-align: center;
-    padding: 0.5rem 0;
-}
-
-#menu-icon {
-    position: absolute;
-    top:30%;
-    right:60px;
-    /* z-index: 9999; */
-    cursor: pointer;
 }
 
 /* Contact Form Styling */

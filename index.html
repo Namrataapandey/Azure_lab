@@ -2,13 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
-      name="viewport"
-      content="Namrata Pandey is a Software Engineering student skilled in web development and SEO optimization.
-"
-      ,width="device-width"
-      ,
-      initial-scale="1.0"
+      name="description"
+      content="Namrata Pandey is a Software Engineering student skilled in web development and SEO optimization."
     />
     <title>Portfolio Website</title>
     <link rel="stylesheet" href="style.css" />
@@ -23,8 +20,6 @@
     src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/index.min.js"
   ></script>
   <body>
-    <script src="script.js"></script>
-
     <header class="header">
       <a href="#" class="logo"><span>NP.</span></a>
       <ul class="nav-links">
@@ -45,7 +40,15 @@
           >
         </li>
       </ul>
-      <i class="fa-sharp-duotone fa-solid fa-bars" id="menu-icon"></i>
+      <button
+        class="menu-toggle"
+        id="menu-icon"
+        type="button"
+        aria-label="Toggle navigation"
+        aria-expanded="false"
+      >
+        <i class="fa-solid fa-bars"></i>
+      </button>
       <a
         href="https://www.linkedin.com/in/namrata-pandey-29b87332a/"
         target="_blank"
@@ -348,6 +351,7 @@
         </form>
       </div>
     </section>
+    <script src="script.js" defer></script>
     <footer>
       <ul>
         <li>

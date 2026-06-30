@@ -37,32 +37,59 @@ function typeWriter() {
 }
 
 // Mobile menu toggle
+function toggleMobileMenu() {
+  const menuButton = document.querySelector("#menu-icon");
+  const navLinks = document.querySelector(".nav-links");
+  const icon = menuButton?.querySelector("i");
+
+  if (!menuButton || !navLinks || !icon) return;
+
+  const isOpen = navLinks.classList.toggle("active");
+  icon.classList.toggle("fa-bars", !isOpen);
+  icon.classList.toggle("fa-xmark", isOpen);
+  menuButton.setAttribute("aria-expanded", String(isOpen));
+}
+
+function closeMobileMenu() {
+  const menuButton = document.querySelector("#menu-icon");
+  const navLinks = document.querySelector(".nav-links");
+  const icon = menuButton?.querySelector("i");
+
+  if (!menuButton || !navLinks || !icon) return;
+
+  navLinks.classList.remove("active");
+  icon.classList.add("fa-bars");
+  icon.classList.remove("fa-xmark");
+  menuButton.setAttribute("aria-expanded", "false");
+}
+
 function initMenuToggle() {
-  const menuIcon = document.querySelector("#menu-icon");
+  const menuButton = document.querySelector("#menu-icon");
   const navLinks = document.querySelector(".nav-links");
 
-  if (!menuIcon || !navLinks) return;
+  if (!menuButton || !navLinks) return;
 
-  menuIcon.addEventListener("click", (event) => {
+  menuButton.addEventListener("click", (event) => {
+    event.preventDefault();
     event.stopPropagation();
-    navLinks.classList.toggle("active");
-    menuIcon.classList.toggle("fa-bars");
-    menuIcon.classList.toggle("fa-xmark");
+    toggleMobileMenu();
   });
 
   document.querySelectorAll(".nav-links a").forEach((link) => {
     link.addEventListener("click", () => {
-      navLinks.classList.remove("active");
-      menuIcon.classList.add("fa-bars");
-      menuIcon.classList.remove("fa-xmark");
+      closeMobileMenu();
     });
   });
 
   document.addEventListener("click", (event) => {
-    if (!navLinks.contains(event.target) && !menuIcon.contains(event.target)) {
-      navLinks.classList.remove("active");
-      menuIcon.classList.add("fa-bars");
-      menuIcon.classList.remove("fa-xmark");
+    if (!navLinks.contains(event.target) && !menuButton.contains(event.target)) {
+      closeMobileMenu();
+    }
+  });
+
+  window.addEventListener("resize", () => {
+    if (window.innerWidth > 768) {
+      closeMobileMenu();
     }
   });
 }
