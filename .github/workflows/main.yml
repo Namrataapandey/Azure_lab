@@ -20,26 +20,10 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "npm"
-
-      - name: Install Dependencies
-        run: |
-          if [ -f package-lock.json ]; then
-            npm ci
-          else
-            npm install
-          fi
-
-      # Uncomment if your project needs a build step
-      # - name: Build Project
-      #   run: npm run build
-
       - name: Install sshpass
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sshpass
 
       - name: Setup Apache Server
         run: |
@@ -47,14 +31,16 @@ jobs:
 
           CLEAN_HOST=$(echo "${HOST}" | sed -e 's|^https\?://||' -e 's|/$||' | xargs)
 
-          echo "<VirtualHost *:$PORT>" > /tmp/site.conf
-          echo "    DocumentRoot /home/$USER/website" >> /tmp/site.conf
-          echo "    <Directory /home/$USER/website>" >> /tmp/site.conf
-          echo "        Options Indexes FollowSymLinks" >> /tmp/site.conf
-          echo "        AllowOverride None" >> /tmp/site.conf
-          echo "        Require all granted" >> /tmp/site.conf
-          echo "    </Directory>" >> /tmp/site.conf
-          echo "</VirtualHost>" >> /tmp/site.conf
+          cat > /tmp/site.conf <<EOF
+          <VirtualHost *:$PORT>
+              DocumentRoot /home/$USER/website
+              <Directory /home/$USER/website>
+                  Options Indexes FollowSymLinks
+                  AllowOverride None
+                  Require all granted
+              </Directory>
+          </VirtualHost>
+          EOF
 
           sshpass -p "$PASS" scp -o StrictHostKeyChecking=no /tmp/site.conf "$USER@$CLEAN_HOST:/tmp/site.conf"
 
@@ -62,11 +48,11 @@ jobs:
             set -e
 
             if ! dpkg -s apache2 >/dev/null 2>&1; then
-              echo '$PASS' | sudo -S apt-get update -qq
-              echo '$PASS' | sudo -S apt-get install -y -qq apache2
+              echo '$PASS' | sudo -S apt-get update
+              echo '$PASS' | sudo -S apt-get install -y apache2
             fi
 
-            mkdir -p ~/website
+            mkdir -p /home/$USER/website
 
             chmod 755 /home/$USER
             chmod 755 /home/$USER/website
@@ -81,10 +67,10 @@ jobs:
               echo '$PASS' | sudo -S a2ensite site.conf
             fi
 
-            echo '$PASS' | sudo -S apache2ctl graceful
+            echo '$PASS' | sudo -S systemctl restart apache2
           "
 
-      - name: Upload files
+      - name: Upload Website Files
         run: |
           set -e
 
@@ -96,9 +82,5 @@ jobs:
 
       - name: Verify Deployment
         run: |
-          set -e
-
           CLEAN_HOST=$(echo "${HOST}" | sed -e 's|^https\?://||' -e 's|/$||' | xargs)
-
-          sleep 2
           curl -I "http://$CLEAN_HOST:$PORT/"
