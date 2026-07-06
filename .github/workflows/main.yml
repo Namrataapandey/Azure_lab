@@ -2,7 +2,9 @@ name: Deploy Static HTML
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -18,12 +20,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # --- NODE.JS DEPENDENCY SETUP ---
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: "npm"
 
       - name: Install Dependencies
         run: |
@@ -33,10 +34,9 @@ jobs:
             npm install
           fi
 
-      # Optional: Uncomment the lines below if your project requires a build step (like React/Vite/Next)
+      # Uncomment if your project needs a build step
       # - name: Build Project
       #   run: npm run build
-      # --------------------------------
 
       - name: Install sshpass
         run: sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
@@ -45,10 +45,8 @@ jobs:
         run: |
           set -e
 
-          # Sanitize HOST: strip out http://, https://, trailing slashes, and whitespace
           CLEAN_HOST=$(echo "${HOST}" | sed -e 's|^https\?://||' -e 's|/$||' | xargs)
 
-          # Dynamically build the virtualhost file locally on the runner
           echo "<VirtualHost *:$PORT>" > /tmp/site.conf
           echo "    DocumentRoot /home/$USER/website" >> /tmp/site.conf
           echo "    <Directory /home/$USER/website>" >> /tmp/site.conf
@@ -58,10 +56,8 @@ jobs:
           echo "    </Directory>" >> /tmp/site.conf
           echo "</VirtualHost>" >> /tmp/site.conf
 
-          # Securely send configuration to remote temp directory
           sshpass -p "$PASS" scp -o StrictHostKeyChecking=no /tmp/site.conf "$USER@$CLEAN_HOST:/tmp/site.conf"
 
-          # Run server configurations remotely
           sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no "$USER@$CLEAN_HOST" "
             set -e
 
@@ -71,13 +67,11 @@ jobs:
             fi
 
             mkdir -p ~/website
-            
-            # Fix permissions so Apache can read the user path
+
             chmod 755 /home/$USER
             chmod 755 /home/$USER/website
 
-            # Safely inject the port configuration
-            if ! grep -q \"Listen $PORT\" /etc/apache2/ports.conf; then
+            if ! grep -q 'Listen $PORT' /etc/apache2/ports.conf; then
               echo '$PASS' | sudo -S sh -c \"echo 'Listen $PORT' >> /etc/apache2/ports.conf\"
             fi
 
@@ -93,18 +87,18 @@ jobs:
       - name: Upload files
         run: |
           set -e
+
           CLEAN_HOST=$(echo "${HOST}" | sed -e 's|^https\?://||' -e 's|/$||' | xargs)
 
-          # Clean destination directory first, then upload cleanly
           sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no "$USER@$CLEAN_HOST" "rm -rf /home/$USER/website/*"
-          
-          # If you use a build framework (like React), change ./* down below to ./dist/* or ./build/*
+
           sshpass -p "$PASS" scp -r -o StrictHostKeyChecking=no ./* "$USER@$CLEAN_HOST:/home/$USER/website/"
 
       - name: Verify Deployment
         run: |
           set -e
+
           CLEAN_HOST=$(echo "${HOST}" | sed -e 's|^https\?://||' -e 's|/$||' | xargs)
-          
+
           sleep 2
           curl -I "http://$CLEAN_HOST:$PORT/"
