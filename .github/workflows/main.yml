@@ -1,4 +1,4 @@
-name: Deploy Static HTML
+name: CI
 
 on:
   push:
@@ -7,80 +7,15 @@ on:
   workflow_dispatch:
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
 
-    env:
-      HOST: ${{ secrets.SERVER_HOST }}
-      USER: ${{ secrets.SERVER_USERNAME }}
-      PASS: ${{ secrets.SERVER_PASSWORD }}
-      PORT: "8025"
-
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install sshpass
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y sshpass
+      - name: Show repository files
+        run: ls -la
 
-      - name: Setup Apache Server
-        run: |
-          set -e
-
-          CLEAN_HOST=$(echo "${HOST}" | sed -e 's|^https\?://||' -e 's|/$||' | xargs)
-
-          cat > /tmp/site.conf <<EOF
-          <VirtualHost *:$PORT>
-              DocumentRoot /home/$USER/website
-              <Directory /home/$USER/website>
-                  Options Indexes FollowSymLinks
-                  AllowOverride None
-                  Require all granted
-              </Directory>
-          </VirtualHost>
-          EOF
-
-          sshpass -p "$PASS" scp -o StrictHostKeyChecking=no /tmp/site.conf "$USER@$CLEAN_HOST:/tmp/site.conf"
-
-          sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no "$USER@$CLEAN_HOST" "
-            set -e
-
-            if ! dpkg -s apache2 >/dev/null 2>&1; then
-              echo '$PASS' | sudo -S apt-get update
-              echo '$PASS' | sudo -S apt-get install -y apache2
-            fi
-
-            mkdir -p /home/$USER/website
-
-            chmod 755 /home/$USER
-            chmod 755 /home/$USER/website
-
-            if ! grep -q 'Listen $PORT' /etc/apache2/ports.conf; then
-              echo '$PASS' | sudo -S sh -c \"echo 'Listen $PORT' >> /etc/apache2/ports.conf\"
-            fi
-
-            echo '$PASS' | sudo -S mv /tmp/site.conf /etc/apache2/sites-available/site.conf
-
-            if ! [ -L /etc/apache2/sites-enabled/site.conf ]; then
-              echo '$PASS' | sudo -S a2ensite site.conf
-            fi
-
-            echo '$PASS' | sudo -S systemctl restart apache2
-          "
-
-      - name: Upload Website Files
-        run: |
-          set -e
-
-          CLEAN_HOST=$(echo "${HOST}" | sed -e 's|^https\?://||' -e 's|/$||' | xargs)
-
-          sshpass -p "$PASS" ssh -o StrictHostKeyChecking=no "$USER@$CLEAN_HOST" "rm -rf /home/$USER/website/*"
-
-          sshpass -p "$PASS" scp -r -o StrictHostKeyChecking=no ./* "$USER@$CLEAN_HOST:/home/$USER/website/"
-
-      - name: Verify Deployment
-        run: |
-          CLEAN_HOST=$(echo "${HOST}" | sed -e 's|^https\?://||' -e 's|/$||' | xargs)
-          curl -I "http://$CLEAN_HOST:$PORT/"
+      - name: Success
+        run: echo "✅ GitHub Actions workflow completed successfully!"
