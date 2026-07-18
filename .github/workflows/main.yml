@@ -14,7 +14,6 @@ jobs:
       VM: intern-vm
       LOCATION: southeastasia
       ADMIN: azureuser
-      APP_DIR: /var/www/html
 
     steps:
       - uses: actions/checkout@v4
@@ -77,28 +76,43 @@ jobs:
 
       - name: Deploy Website
         run: |
+          # List files to debug
+          echo "=== Files in repository ==="
+          ls -la
+
+          # Deploy to VM
           az vm run-command invoke -g $RG -n $VM \
             --command-id RunShellScript \
             --scripts "
               cd /var/www/html
               sudo rm -rf index.html style.css script.js
+              
+              # Download files from GitHub using raw URLs
               sudo curl -O https://raw.githubusercontent.com/Namrataapandey/Azure_lab/main/index.html
               sudo curl -O https://raw.githubusercontent.com/Namrataapandey/Azure_lab/main/style.css
               sudo curl -O https://raw.githubusercontent.com/Namrataapandey/Azure_lab/main/script.js
+              
+              # Set permissions
               sudo chown -R www-data:www-data /var/www/html
               sudo systemctl reload apache2
+              
+              # Verify files are there
+              ls -la /var/www/html/
             "
 
       - name: Verify deployment
         run: |
-          sleep 2
+          sleep 3
           echo "=== Verifying deployment ==="
           RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "http://$VM_IP/")
-          CONTENT=$(curl -s "http://$VM_IP/")
           echo "HTTP Status: $RESPONSE"
-          echo "Content: $(echo "$CONTENT" | grep -o '<title>.*</title>')"
+
           if [ "$RESPONSE" != "200" ]; then
             echo "Deployment verification failed"
             exit 1
           fi
+
+          # Get page title to confirm it's your site
+          TITLE=$(curl -s "http://$VM_IP/" | grep -o '<title>.*</title>' | head -1)
+          echo "Page Title: $TITLE"
           echo "Deployment verified — site is live on http://$VM_IP/"
