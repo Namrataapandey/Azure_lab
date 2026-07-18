@@ -10,12 +10,11 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      RG: azure-lab-rg
-      VM: lab-vm
+      RG: demo-production-rg
+      VM: intern-vm
       LOCATION: southeastasia
       ADMIN: azureuser
       APP_DIR: /var/www/html
-      SRC: .
 
     steps:
       - uses: actions/checkout@v4
@@ -45,6 +44,7 @@ jobs:
             if [ "$STATE" != "VM running" ]; then
               echo "=== Starting VM ==="
               az vm start -g $RG -n $VM --output none
+              echo "VM started"
             fi
           fi
 
@@ -55,10 +55,25 @@ jobs:
               --scripts "echo ready" &>/dev/null && break
             sleep 10
           done
+          echo "VM agent ready"
 
       - name: Get VM IP
         run: |
           echo "VM_IP=$(az vm show -g $RG -n $VM -d --query publicIps -o tsv)" >> $GITHUB_ENV
+
+      - name: Setup Apache
+        run: |
+          set -e
+          az vm run-command invoke -g $RG -n $VM \
+            --command-id RunShellScript \
+            --scripts "
+              set -e
+              if ! dpkg -s apache2 2>/dev/null | grep -q 'Status: install ok installed'; then
+                apt-get update -qq && apt-get install -y -qq apache2
+              fi
+              systemctl start apache2
+              systemctl enable apache2
+            "
 
       - name: Deploy Website
         run: |
@@ -70,15 +85,20 @@ jobs:
               sudo curl -O https://raw.githubusercontent.com/Namrataapandey/Azure_lab/main/index.html
               sudo curl -O https://raw.githubusercontent.com/Namrataapandey/Azure_lab/main/style.css
               sudo curl -O https://raw.githubusercontent.com/Namrataapandey/Azure_lab/main/script.js
+              sudo chown -R www-data:www-data /var/www/html
               sudo systemctl reload apache2
             "
 
       - name: Verify deployment
         run: |
           sleep 2
+          echo "=== Verifying deployment ==="
           RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "http://$VM_IP/")
+          CONTENT=$(curl -s "http://$VM_IP/")
+          echo "HTTP Status: $RESPONSE"
+          echo "Content: $(echo "$CONTENT" | grep -o '<title>.*</title>')"
           if [ "$RESPONSE" != "200" ]; then
             echo "Deployment verification failed"
             exit 1
           fi
-          echo "✅ Deployment verified — site is live on http://$VM_IP/"
+          echo "Deployment verified — site is live on http://$VM_IP/"
