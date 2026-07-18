@@ -1,4 +1,4 @@
-name: Deploy to Azure VM
+name: Deploy to Azure VM (No Node.js)
 
 on:
   push:
@@ -9,117 +9,30 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
 
-    env:
-      RG: demo-production-rg
-      VM: intern-vm
-      LOCATION: southeastasia
-      ADMIN: azureuser
-
     steps:
       - uses: actions/checkout@v4
 
-      - uses: azure/login@v2
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
-
-      - name: Provision infrastructure
+      # Use Azure CLI directly without Node.js
+      - name: Azure Login
         run: |
-          set -e
-          az config set core.only_show_errors=true
-          az group create --name $RG --location $LOCATION --output none
+          echo '${{ secrets.AZURE_CREDENTIALS }}' | az login --service-principal -u $(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .clientId) -p $(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .clientSecret) --tenant $(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .tenantId)
 
-          if ! az vm show -g $RG -n $VM &>/dev/null; then
-            echo "=== Creating VM ==="
-            az vm create -g $RG -n $VM \
-              --image Ubuntu2204 \
-              --size Standard_D2s_v3 \
-              --admin-username $ADMIN \
-              --generate-ssh-keys \
-              --output none
-            az vm open-port -g $RG -n $VM --port 80 --priority 300 --output none
-          else
-            STATE=$(az vm show -g $RG -n $VM -d --query powerState -o tsv)
-            echo "VM state: $STATE"
-            if [ "$STATE" != "VM running" ]; then
-              echo "=== Starting VM ==="
-              az vm start -g $RG -n $VM --output none
-              echo "VM started"
-            fi
-          fi
-
-          echo "=== Waiting for VM agent ==="
-          for i in $(seq 1 30); do
-            az vm run-command invoke -g $RG -n $VM \
-              --command-id RunShellScript \
-              --scripts "echo ready" &>/dev/null && break
-            sleep 10
-          done
-          echo "VM agent ready"
-
-      - name: Get VM IP
+      - name: Deploy to VM
         run: |
-          echo "VM_IP=$(az vm show -g $RG -n $VM -d --query publicIps -o tsv)" >> $GITHUB_ENV
-
-      - name: Setup Apache
-        run: |
-          set -e
-          az vm run-command invoke -g $RG -n $VM \
-            --command-id RunShellScript \
-            --scripts "
-              set -e
-              if ! dpkg -s apache2 2>/dev/null | grep -q 'Status: install ok installed'; then
-                apt-get update -qq && apt-get install -y -qq apache2
-              fi
-              systemctl start apache2
-              systemctl enable apache2
-            "
-
-      - name: Deploy Website Files
-        run: |
-          echo "=== Listing files in repository ==="
-          ls -la
-          ls -la assets/ || echo "No assets folder found"
-
-          # Deploy HTML, CSS, JS
-          az vm run-command invoke -g $RG -n $VM \
+          az vm run-command invoke -g demo-production-rg -n intern-vm \
             --command-id RunShellScript \
             --scripts "
               cd /var/www/html
-              sudo rm -rf index.html style.css script.js assets
-              
-              # Download main files
-              sudo curl -o index.html https://raw.githubusercontent.com/Namrataapandey/Azure_lab/main/index.html
-              sudo curl -o style.css https://raw.githubusercontent.com/Namrataapandey/Azure_lab/main/style.css
-              sudo curl -o script.js https://raw.githubusercontent.com/Namrataapandey/Azure_lab/main/script.js
-              
-              # Create assets folder and download all images
-              sudo mkdir -p assets
-              cd assets
-              
-              # Download all files from assets folder (replace with your actual file names)
-              # You need to list each file individually or use a loop
-              sudo curl -O https://raw.githubusercontent.com/Namrataapandey/Azure_lab/main/assets/your-image1.png
-              sudo curl -O https://raw.githubusercontent.com/Namrataapandey/Azure_lab/main/assets/your-image2.jpg
-              # Add more files as needed
-              
+              sudo rm -rf index.html style.css script.js assets .git
+              sudo git clone https://github.com/Namrataapandey/Azure_lab.git temp
+              sudo cp -r temp/* temp/.* . 2>/dev/null || true
+              sudo rm -rf temp
               sudo chown -R www-data:www-data /var/www/html
               sudo systemctl reload apache2
-              ls -la /var/www/html/
-              ls -la /var/www/html/assets/
             "
 
-      - name: Verify deployment
+      - name: Verify
         run: |
-          sleep 3
-          echo "=== Verifying deployment ==="
-          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "http://$VM_IP/")
-          echo "HTTP Status: $RESPONSE"
-
-          if [ "$RESPONSE" != "200" ]; then
-            echo "Deployment verification failed"
-            exit 1
-          fi
-
-          TITLE=$(curl -s "http://$VM_IP/" | grep -o '<title>.*</title>' | head -1)
-          echo "Page Title: $TITLE"
-          echo "Deployment verified — site is live on http://$VM_IP/"
+          IP=$(az vm show -d -g demo-production-rg -n intern-vm --query publicIps -o tsv)
+          echo "Site: http://$IP/"
+          curl -s -o /dev/null -w "%{http_code}" "http://$IP/"
