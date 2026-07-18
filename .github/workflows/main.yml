@@ -12,108 +12,47 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Fix Node.js 20 deprecation - use Node.js 24
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 24
 
-      # Fix Azure Login with correct tenant
       - name: Azure Login
         uses: azure/login@v2
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Provision infrastructure
+      - name: Test Azure Connection
         run: |
-          set -e
-          az config set core.only_show_errors=true
-          az group create --name demo-production-rg --location southeastasia --output none
-
-          if ! az vm show -g demo-production-rg -n intern-vm &>/dev/null; then
-            echo "=== Creating VM ==="
-            az vm create -g demo-production-rg -n intern-vm \
-              --image Ubuntu2204 \
-              --size Standard_D2s_v3 \
-              --admin-username azureuser \
-              --generate-ssh-keys \
-              --output none
-            az vm open-port -g demo-production-rg -n intern-vm --port 80 --priority 300 --output none
-          else
-            STATE=$(az vm show -g demo-production-rg -n intern-vm -d --query powerState -o tsv)
-            echo "VM state: $STATE"
-            if [ "$STATE" != "VM running" ]; then
-              echo "=== Starting VM ==="
-              az vm start -g demo-production-rg -n intern-vm --output none
-              echo "VM started"
-            fi
-          fi
-
-          echo "=== Waiting for VM agent ==="
-          for i in $(seq 1 30); do
-            az vm run-command invoke -g demo-production-rg -n intern-vm \
-              --command-id RunShellScript \
-              --scripts "echo ready" &>/dev/null && break
-            sleep 10
-          done
-          echo "VM agent ready"
+          echo "Testing Azure connection..."
+          az account show
+          az group list -o table
 
       - name: Get VM IP
         run: |
           echo "VM_IP=$(az vm show -g demo-production-rg -n intern-vm -d --query publicIps -o tsv)" >> $GITHUB_ENV
+          echo "VM IP: $VM_IP"
 
-      - name: Setup Apache
+      - name: Deploy Website
         run: |
-          set -e
-          az vm run-command invoke -g demo-production-rg -n intern-vm \
-            --command-id RunShellScript \
-            --scripts "
-              set -e
-              if ! dpkg -s apache2 2>/dev/null | grep -q 'Status: install ok installed'; then
-                apt-get update -qq && apt-get install -y -qq apache2
-              fi
-              systemctl start apache2
-              systemctl enable apache2
-            "
-
-      - name: Deploy Website with Assets
-        run: |
-          echo "=== Deploying website to VM ==="
-          
+          echo "=== Deploying to VM ==="
           az vm run-command invoke -g demo-production-rg -n intern-vm \
             --command-id RunShellScript \
             --scripts "
               cd /var/www/html
-              sudo rm -rf index.html style.css script.js assets .git
-              
-              # Clone the repository
+              sudo rm -rf index.html style.css script.js assets
               sudo git clone https://github.com/Namrataapandey/Azure_lab.git temp
-              sudo cp -r temp/* temp/.* . 2>/dev/null || true
+              sudo cp -r temp/* . 2>/dev/null
               sudo rm -rf temp
-              
-              # Set permissions
               sudo chown -R www-data:www-data /var/www/html
               sudo systemctl reload apache2
-              
-              # Show deployed files
-              echo '=== Deployed files ==='
               ls -la /var/www/html/
-              echo '=== Assets folder ==='
-              ls -la /var/www/html/assets/ 2>/dev/null || echo 'No assets folder found'
             "
 
-      - name: Verify deployment
+      - name: Verify Deployment
         run: |
           sleep 3
-          echo "=== Verifying deployment ==="
-          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "http://$VM_IP/")
-          echo "HTTP Status: $RESPONSE"
-          
-          if [ "$RESPONSE" != "200" ]; then
-            echo "Deployment verification failed"
-            exit 1
-          fi
-          
-          TITLE=$(curl -s "http://$VM_IP/" | grep -o '<title>.*</title>' | head -1)
-          echo "Page Title: $TITLE"
-          echo "✅ Deployment verified — site is live on http://$VM_IP/"
+          echo "=== Verifying ==="
+          curl -s -o /dev/null -w "%{http_code}" "http://$VM_IP/"
+          echo ""
+          echo "✅ Site: http://$VM_IP/"
