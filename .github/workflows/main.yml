@@ -10,8 +10,8 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      RG: azure-ci-cd-rg
-      VM: cicd-vm
+      RG: demo-production-rg
+      VM: intern-vm
       LOCATION: southeastasia
       ADMIN: azureuser
       APP_DIR: /var/www/azure-cicd-app
