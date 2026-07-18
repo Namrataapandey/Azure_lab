@@ -1,21 +1,146 @@
-name: CI
+name: Deploy to Azure VM
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
 
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
 
+    env:
+      RG: azure-ci-cd-rg
+      VM: cicd-vm
+      LOCATION: southeastasia
+      ADMIN: azureuser
+      APP_DIR: /var/www/azure-cicd-app
+      SRC: .
+
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Show repository files
-        run: ls -la
+      - uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Success
-        run: echo "✅ GitHub Actions workflow completed successfully!"
+      - name: Provision infrastructure
+        run: |
+          set -e
+          az config set core.only_show_errors=true
+          az group create --name $RG --location $LOCATION --output none
+
+          if ! az vm show -g $RG -n $VM &>/dev/null; then
+            echo "=== Creating VM ==="
+            az vm create -g $RG -n $VM \
+              --image Ubuntu2204 \
+              --size Standard_D2s_v3 \
+              --admin-username $ADMIN \
+              --generate-ssh-keys \
+              --output none
+            az vm open-port -g $RG -n $VM --port 80 --priority 300 --output none
+          else
+            STATE=$(az vm show -g $RG -n $VM -d --query powerState -o tsv)
+            echo "VM state: $STATE"
+            if [ "$STATE" != "VM running" ]; then
+              echo "=== Starting VM ==="
+              az vm start -g $RG -n $VM --output none
+              echo "VM started"
+            fi
+          fi
+
+          echo "=== Waiting for VM agent ==="
+          for i in $(seq 1 30); do
+            az vm run-command invoke -g $RG -n $VM \
+              --command-id RunShellScript \
+              --scripts "echo ready" &>/dev/null && break
+            sleep 10
+          done
+          echo "VM agent ready"
+
+      - name: Get VM IP
+        run: |
+          echo "VM_IP=$(az vm show -g $RG -n $VM -d --query publicIps -o tsv)" >> $GITHUB_ENV
+
+      - name: Setup Apache
+        run: |
+          set -e
+          echo '<VirtualHost *:80>' > /tmp/azure-cicd.conf
+          echo '    DocumentRoot '"$APP_DIR"'/current' >> /tmp/azure-cicd.conf
+          echo '    <Directory '"$APP_DIR"'>' >> /tmp/azure-cicd.conf
+          echo '        Options -Indexes +FollowSymLinks' >> /tmp/azure-cicd.conf
+          echo '        AllowOverride None' >> /tmp/azure-cicd.conf
+          echo '        Require all granted' >> /tmp/azure-cicd.conf
+          echo '    </Directory>' >> /tmp/azure-cicd.conf
+          echo '    ErrorLog ${APACHE_LOG_DIR}/azure-cicd-error.log' >> /tmp/azure-cicd.conf
+          echo '    CustomLog ${APACHE_LOG_DIR}/azure-cicd-access.log combined' >> /tmp/azure-cicd.conf
+          echo '</VirtualHost>' >> /tmp/azure-cicd.conf
+
+          B64_CONF=$(base64 -w0 /tmp/azure-cicd.conf)
+          az vm run-command invoke -g $RG -n $VM \
+            --command-id RunShellScript \
+            --scripts "
+              set -e
+              if ! dpkg -s apache2 2>/dev/null | grep -q 'Status: install ok installed'; then
+                apt-get update -qq && apt-get install -y -qq apache2
+              fi
+              mkdir -p $APP_DIR/v1 $APP_DIR/v2
+              echo '$B64_CONF' | base64 -d > /etc/apache2/sites-available/azure-cicd.conf
+              a2dissite 000-default.conf 2>/dev/null || true
+              a2ensite azure-cicd.conf 2>/dev/null || true
+              [ -L $APP_DIR/current ] || ln -sfn $APP_DIR/v1 $APP_DIR/current
+              [ -f $APP_DIR/v1/index.html ] || echo '<html><body><h1>Deploying...</h1></body></html>' > $APP_DIR/v1/index.html
+              [ -f $APP_DIR/v2/index.html ] || echo '<html><body><h1>Deploying...</h1></body></html>' > $APP_DIR/v2/index.html
+              chown -R $ADMIN:www-data $APP_DIR 2>/dev/null || true
+              chmod 755 /home/$ADMIN 2>/dev/null || true
+              apache2ctl configtest && apache2ctl graceful
+            "
+
+      - name: Blue-Green Deploy
+        run: |
+          set -e
+
+          echo "=== Determining inactive version ==="
+          MSG=$(az vm run-command invoke -g $RG -n $VM \
+            --command-id RunShellScript \
+            --scripts "
+              if [ -L $APP_DIR/current ] && [ \"\$(readlink $APP_DIR/current)\" = \"$APP_DIR/v2\" ]; then
+                echo v1
+              else
+                echo v2
+              fi
+            " --query "value[0].message" -o tsv 2>/dev/null)
+          INACTIVE=$(echo "$MSG" | grep -E '^v[12]$' | head -1)
+          echo "Target version: $INACTIVE"
+
+          echo "=== Preparing index.html ==="
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          DEPLOY_TIME="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+          sed "s/__COMMIT_HASH__/$SHORT_SHA/g; s/__DEPLOY_TIME__/$DEPLOY_TIME/g" $SRC/index.html > /tmp/index_deploy.html
+
+          echo "=== Uploading and swapping ==="
+          B64=$(base64 -w0 /tmp/index_deploy.html)
+          az vm run-command invoke -g $RG -n $VM \
+            --command-id RunShellScript \
+            --scripts "
+              echo '$B64' | base64 -d > $APP_DIR/$INACTIVE/index.html
+              ln -sfn $APP_DIR/$INACTIVE $APP_DIR/current
+              echo '$DEPLOY_TIME - deployed $INACTIVE' >> $APP_DIR/deploy.log
+              apache2ctl graceful
+            "
+
+          echo "=== Deploy complete ==="
+
+      - name: Verify deployment
+        run: |
+          sleep 2
+          echo "=== Verifying deployment ==="
+          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "http://$VM_IP/")
+          CONTENT=$(curl -s "http://$VM_IP/")
+          echo "HTTP Status: $RESPONSE"
+          echo "Content: $(echo "$CONTENT" | grep -o '<title>.*</title>')"
+          if [ "$RESPONSE" != "200" ]; then
+            echo "Deployment verification failed"
+            exit 1
+          fi
+          echo "Deployment verified — site is live on http://$VM_IP/"
